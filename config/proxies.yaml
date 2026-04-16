@@ -1,0 +1,11 @@
+# Configuration des proxies rotatifs
+# Format supporté : http://, https://, socks5://
+# Laisser vide pour scraper sans proxy (risque de blocage IP)
+
+proxies:
+  # Exemples (remplacez avec vos propres proxies) :
+  # - http://user:password@proxy1.example.com:8080
+  # - http://user:password@proxy2.example.com:8080
+  # - socks5://user:password@proxy3.example.com:1080
+
+# Pour activer les proxies, définir PROXY_ENABLED=true dans .env

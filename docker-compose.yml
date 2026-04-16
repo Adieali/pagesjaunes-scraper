@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  scraper:
+    build: .
+    image: pagesjaunes-pro-scraper:latest
+    volumes:
+      - ./data:/app/data          # Persistance des données locales
+      - ./config:/app/config      # Fichier proxies.yaml
+    environment:
+      - PROXIES=${PROXIES:-}       # Liste de proxies séparés par virgules
+      - PROXY_ENABLED=${PROXY_ENABLED:-false}
+      - DOWNLOAD_DELAY=${DOWNLOAD_DELAY:-2.0}
+    command: >
+      scrape
+      --what "${WHAT:-restaurant}"
+      --where "${WHERE:-Paris}"
+      --pages ${PAGES:-5}
+      --output-dir /app/data
+
+  # ── Service optionnel : viewer SQLite via web (datasette) ─────────────────
+  datasette:
+    image: datasetteproject/datasette
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/app/data
+    command: serve /app/data/pagesjaunes.db --host 0.0.0.0 --port 8001
+    depends_on:
+      - scraper
+    profiles:
+      - viewer

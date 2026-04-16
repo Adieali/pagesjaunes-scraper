@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+ENV/
+
+# Variables d'environnement (JAMAIS committer)
+.env
+*.env.local
+
+# Données collectées (potentiellement volumineuses)
+data/*.csv
+data/*.json
+data/*.jsonl
+data/*.db
+!data/.gitkeep
+
+# Scrapy
+.scrapy/
+httpcache/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+scrapy.log
+
+# Docker
+.dockerignore
