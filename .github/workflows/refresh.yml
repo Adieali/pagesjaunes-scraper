@@ -30,7 +30,7 @@ jobs:
 
       - name: Run scraper
         run: |
-          pj-scraper scrape --help
+          pj-scraper scrape --what "plombier" --where "Paris" --pages 5 --output-dir data -v
         env:
           PYTHONDONTWRITEBYTECODE: "1"
 
