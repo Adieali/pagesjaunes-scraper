@@ -49,7 +49,6 @@ DOWNLOADER_MIDDLEWARES = {
     "pagesjaunes.middlewares.ProxyRotationMiddleware": 410,
     "pagesjaunes.middlewares.RetryOnBanMiddleware": 420,
     "scrapy.downloadermiddlewares.retry.RetryMiddleware": 550,
-    "scrapy_playwright.middleware.ScrapyPlaywrightDownloadMiddleware": 800,
 }
 
 SPIDER_MIDDLEWARES = {
