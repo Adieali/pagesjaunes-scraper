@@ -43,13 +43,13 @@ PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30000  # 30s
 PLAYWRIGHT_ABORT_REQUEST = "pagesjaunes.utils.abort_non_essential"
 
 # ── Middlewares ───────────────────────────────────────────────────────────────
-DOWNLOADER_MIDDLEWARES = {
-    "scrapy.downloadermiddlewares.useragent.UserAgentMiddleware": None,
-    "pagesjaunes.middlewares.RandomUserAgentMiddleware": 400,
-    "pagesjaunes.middlewares.ProxyRotationMiddleware": 410,
-    "pagesjaunes.middlewares.RetryOnBanMiddleware": 420,
-    "scrapy.downloadermiddlewares.retry.RetryMiddleware": 550,
-}
+#DOWNLOADER_MIDDLEWARES = {
+ #   "scrapy.downloadermiddlewares.useragent.UserAgentMiddleware": None,
+ #  "pagesjaunes.middlewares.RandomUserAgentMiddleware": 400,
+ # "pagesjaunes.middlewares.ProxyRotationMiddleware": 410,
+ #   "pagesjaunes.middlewares.RetryOnBanMiddleware": 420,
+ #   "scrapy.downloadermiddlewares.retry.RetryMiddleware": 550,
+#}
 
 SPIDER_MIDDLEWARES = {
     "pagesjaunes.middlewares.StatsMiddleware": 100,
