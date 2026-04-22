@@ -30,6 +30,18 @@ jobs:
       - name: Install Playwright Scrapy integration
         run: |
           pip install scrapy-playwright
+      - name: Debug env
+        run: |
+          python -c "
+          import scrapy_playwright
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              b = p.chromium.launch(headless=True, args=['--no-sandbox','--disable-dev-shm-usage'])
+              page = b.new_page()
+              page.goto('https://www.pagesjaunes.fr')
+              print('Title:', page.title())
+              b.close()
+          "
 
       - name: Run scraper
         run: |
