@@ -1,0 +1,296 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# scrape-and-deploy.yml
+#
+# Ce workflow :
+#   1. Lance pj-scraper sur une liste de catégories × villes
+#   2. Exporte les résultats vers data.json via export_to_web.py
+#   3. Pousse data.json dans le repo annuaire-pagesjaunes (déploiement Vercel auto)
+#
+# Prérequis (à configurer dans Settings > Secrets and variables > Actions) :
+#   - ANNUAIRE_PAT : Personal Access Token GitHub avec le scope "repo"
+#                   sur le repo Adieali/annuaire-pagesjaunes
+#
+# Comment créer le PAT :
+#   GitHub > Settings > Developer settings > Personal access tokens > Fine-grained
+#   → Repository access : Adieali/annuaire-pagesjaunes
+#   → Permissions : Contents (Read and Write)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: 🕷️ Scrape & Deploy
+
+on:
+  # ── Planification automatique ───────────────────────────────────────────────
+  schedule:
+    - cron: '0 3 * * 1'   # Tous les lundis à 3h UTC (adapter selon vos besoins)
+
+  # ── Déclenchement manuel avec paramètres ────────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      categories:
+        description: 'Catégories à scraper (séparées par des virgules)'
+        required: false
+        default: 'restaurant,plombier,coiffeur,boulangerie,electricien,garage,avocat,jardinier,spa'
+      cities:
+        description: 'Villes à scraper (séparées par des virgules)'
+        required: false
+        default: 'Paris,Lyon,Marseille,Bordeaux,Nice,Toulouse,Strasbourg,Nantes'
+      pages:
+        description: 'Nombre de pages par requête (1–10)'
+        required: false
+        default: '3'
+      min_rating:
+        description: 'Note minimale des professionnels à exporter (0–5)'
+        required: false
+        default: '0'
+      dry_run:
+        description: 'Dry-run : scraper sans pousser vers annuaire (true/false)'
+        required: false
+        default: 'false'
+
+# ── Valeurs par défaut pour le scheduling automatique ─────────────────────────
+env:
+  DEFAULT_CATEGORIES: 'restaurant,plombier,coiffeur,boulangerie,electricien,garage,avocat,jardinier,spa'
+  DEFAULT_CITIES:     'Paris,Lyon,Marseille,Bordeaux,Nice,Toulouse,Strasbourg,Nantes'
+  DEFAULT_PAGES:      '3'
+  DEFAULT_MIN_RATING: '0'
+  ANNUAIRE_REPO:      'Adieali/annuaire-pagesjaunes'
+  DB_PATH:            'data/pagesjaunes.db'
+  DATA_JSON_PATH:     'data.json'
+
+jobs:
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 1 — SCRAPING
+  # ════════════════════════════════════════════════════════════════════════════
+  scrape:
+    name: 🕷️ Scraping Pages Jaunes
+    runs-on: ubuntu-latest
+    timeout-minutes: 300   # 5h max (scrapy est lent avec les délais)
+
+    outputs:
+      record_count: ${{ steps.export.outputs.record_count }}
+      data_changed: ${{ steps.check_changes.outputs.changed }}
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: 📥 Checkout du scraper
+        uses: actions/checkout@v4
+
+      # ── Python ──────────────────────────────────────────────────────────────
+      - name: 🐍 Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── Dépendances pip ─────────────────────────────────────────────────────
+      - name: 📦 Installation des dépendances
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      # ── Playwright ──────────────────────────────────────────────────────────
+      - name: 🎭 Installation de Playwright (Chromium)
+        run: playwright install chromium --with-deps
+
+      # ── Cache des browsers Playwright ───────────────────────────────────────
+      - name: 💾 Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: playwright-chromium-${{ runner.os }}-
+
+      # ── Préparation ─────────────────────────────────────────────────────────
+      - name: 📁 Création du répertoire de données
+        run: mkdir -p data
+
+      # ── Scraping ────────────────────────────────────────────────────────────
+      - name: 🔍 Scraping multi-catégories × villes
+        run: |
+          CATEGORIES="${{ github.event.inputs.categories || env.DEFAULT_CATEGORIES }}"
+          CITIES="${{ github.event.inputs.cities || env.DEFAULT_CITIES }}"
+          PAGES="${{ github.event.inputs.pages || env.DEFAULT_PAGES }}"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📋 Paramètres de scraping"
+          echo "   Catégories : $CATEGORIES"
+          echo "   Villes     : $CITIES"
+          echo "   Pages/req  : $PAGES"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          ERRORS=0
+          TOTAL=0
+
+          IFS=',' read -ra CAT_LIST  <<< "$CATEGORIES"
+          IFS=',' read -ra CITY_LIST <<< "$CITIES"
+
+          for cat in "${CAT_LIST[@]}"; do
+            cat=$(echo "$cat" | xargs)   # trim espaces
+            for city in "${CITY_LIST[@]}"; do
+              city=$(echo "$city" | xargs)
+              TOTAL=$((TOTAL + 1))
+              echo ""
+              echo "▶ [$TOTAL] $cat @ $city ($PAGES pages)"
+
+              pj-scraper scrape \
+                --what     "$cat"  \
+                --where    "$city" \
+                --pages    "$PAGES" \
+                --output-dir data  \
+                --delay    2.5     \
+                --playwright       \
+              && echo "   ✅ OK" \
+              || { echo "   ⚠️  Échec — on continue avec la suite"; ERRORS=$((ERRORS + 1)); }
+
+              # Pause entre chaque requête pour ne pas déclencher les anti-bots
+              sleep 3
+            done
+          done
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 Scraping terminé : $TOTAL requêtes, $ERRORS erreur(s)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Échouer si TOUTES les requêtes ont échoué
+          if [ "$ERRORS" -eq "$TOTAL" ]; then
+            echo "❌ Toutes les requêtes ont échoué"
+            exit 1
+          fi
+
+      # ── Statistiques ────────────────────────────────────────────────────────
+      - name: 📊 Statistiques de la base
+        run: pj-scraper stats --db "$DB_PATH" || echo "⚠️ Impossible d'afficher les stats"
+
+      # ── Export vers data.json ────────────────────────────────────────────────
+      - name: 📤 Export vers data.json
+        id: export
+        run: |
+          MIN_RATING="${{ github.event.inputs.min_rating || env.DEFAULT_MIN_RATING }}"
+
+          python export_to_web.py \
+            --db      "$DB_PATH"       \
+            --out     "$DATA_JSON_PATH" \
+            --min-rating "$MIN_RATING"
+
+          # Compter les enregistrements et exposer en output
+          COUNT=$(python -c "
+          import json, sys
+          try:
+              data = json.load(open('$DATA_JSON_PATH'))
+              print(len(data))
+          except Exception as e:
+              print(0)
+          ")
+          echo "record_count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "✅ $COUNT professionnels exportés dans $DATA_JSON_PATH"
+
+      # ── Vérification des changements ─────────────────────────────────────────
+      - name: 🔄 Vérification des changements vs dernier artefact
+        id: check_changes
+        run: |
+          # On considère qu'il y a toujours des changements si le count > 0
+          COUNT="${{ steps.export.outputs.record_count }}"
+          if [ "$COUNT" -gt "0" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Aucun professionnel exporté — déploiement annulé"
+          fi
+
+      # ── Upload de l'artefact ─────────────────────────────────────────────────
+      - name: 📎 Upload data.json comme artefact
+        if: steps.check_changes.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-json-${{ github.run_id }}
+          path: ${{ env.DATA_JSON_PATH }}
+          retention-days: 30
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 2 — DÉPLOIEMENT vers annuaire-pagesjaunes
+  # ════════════════════════════════════════════════════════════════════════════
+  deploy:
+    name: 🚀 Déploiement vers annuaire-pagesjaunes
+    runs-on: ubuntu-latest
+    needs: scrape
+    if: |
+      needs.scrape.outputs.data_changed == 'true' &&
+      github.event.inputs.dry_run != 'true'
+
+    steps:
+      # ── Télécharger l'artefact ───────────────────────────────────────────────
+      - name: 📥 Téléchargement de data.json
+        uses: actions/download-artifact@v4
+        with:
+          name: data-json-${{ github.run_id }}
+
+      # ── Cloner le repo annuaire ──────────────────────────────────────────────
+      - name: 📥 Checkout annuaire-pagesjaunes
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ANNUAIRE_REPO }}
+          token: ${{ secrets.ANNUAIRE_PAT }}
+          path: annuaire
+
+      # ── Copier data.json ─────────────────────────────────────────────────────
+      - name: 📋 Copie de data.json
+        run: cp data.json annuaire/data.json
+
+      # ── Commit et push ───────────────────────────────────────────────────────
+      - name: 📤 Commit & Push vers annuaire-pagesjaunes
+        working-directory: annuaire
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add data.json
+
+          # Vérifier si le fichier a réellement changé
+          if git diff --staged --quiet; then
+            echo "ℹ️  data.json inchangé — aucun commit nécessaire"
+            exit 0
+          fi
+
+          COUNT="${{ needs.scrape.outputs.record_count }}"
+          DATE=$(date -u '+%d/%m/%Y %H:%M UTC')
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          git commit -m "🤖 Mise à jour automatique — ${COUNT} professionnels (${DATE})
+
+          Source  : ${{ github.repository }}@${{ github.sha }}
+          Run     : ${RUN_URL}
+          Trigger : ${{ github.event_name }}"
+
+          git push
+          echo "✅ data.json poussé avec succès vers ${{ env.ANNUAIRE_REPO }}"
+
+      # ── Résumé final ─────────────────────────────────────────────────────────
+      - name: 📋 Résumé du déploiement
+        run: |
+          echo "## ✅ Déploiement réussi" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Champ | Valeur |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Professionnels exportés | ${{ needs.scrape.outputs.record_count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Destination | [${{ env.ANNUAIRE_REPO }}](https://github.com/${{ env.ANNUAIRE_REPO }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Site live | [annuaire-pagesjaunes.vercel.app](https://annuaire-pagesjaunes.vercel.app) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Date | $(date -u '+%d/%m/%Y %H:%M UTC') |" >> $GITHUB_STEP_SUMMARY
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 3 — NOTIFICATION en cas d'échec
+  # ════════════════════════════════════════════════════════════════════════════
+  notify-failure:
+    name: 🔔 Notification d'échec
+    runs-on: ubuntu-latest
+    needs: [scrape, deploy]
+    if: failure()
+
+    steps:
+      - name: ❌ Résumé de l'échec
+        run: |
+          echo "## ❌ Échec du workflow Scrape & Deploy" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Le workflow a échoué. Consultez les logs pour plus de détails :" >> $GITHUB_STEP_SUMMARY
+          echo "[Voir le run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
